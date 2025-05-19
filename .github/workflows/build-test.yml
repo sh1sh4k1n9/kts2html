@@ -1,0 +1,91 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      build-artifacts:
+        description: "The build artifacts from the build job"
+        value: ${{ jobs.build.outputs.artifact-name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: build-artifacts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+        continue-on-error: true
+        timeout-minutes: 2
+
+      - name: Manual wrapper validation
+        if: ${{ failure() }}
+        run: |
+          WRAPPER_HASH=$(sha256sum gradle/wrapper/gradle-wrapper.jar | cut -d ' ' -f 1)
+          ALLOWED_HASH="e996d452d2645e70c01c11143ca2d3742734a28da2bf61f25c82bdc288c9e637"
+          if [ "$WRAPPER_HASH" != "$ALLOWED_HASH" ]; then
+            echo "Gradle wrapper validation failed!"
+            echo "Expected hash: $ALLOWED_HASH"
+            echo "Actual hash:   $WRAPPER_HASH"
+            exit 1
+          fi
+          echo "Gradle wrapper validation successful"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build with Gradle
+        run: ./gradlew build -x test
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: build/libs
+          retention-days: 1
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: build/libs
+
+      - name: Run tests
+        run: ./gradlew test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/reports/tests/
